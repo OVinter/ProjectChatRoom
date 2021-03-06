@@ -122,7 +122,7 @@ void *handle_client(void *arg){
 			exit(-1);
 		}
 		sprintf(buff_out, "%s has joined\n", cli->name);
-		//printf("%s", buff_out);
+		printf("%s", buff_out);
 		send_message(buff_out, cli->uid);
 	}
 
@@ -136,9 +136,6 @@ void *handle_client(void *arg){
 			printf("ERROR: saving password to file\n");
 			exit(-2);
 		}
-		sprintf(buff_out, "%s has joined\n", cli->name);
-		//printf("%s", buff_out);
-		send_message(buff_out, cli->uid);
 	}
 
 	bzero(buff_out, BUFFER_SZ);

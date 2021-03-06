@@ -15,6 +15,7 @@
 // Global variables
 volatile sig_atomic_t flag = 0;
 int sockfd = 0;
+int filefd = 0;
 char name[32];
 char password[32];
 
@@ -49,7 +50,7 @@ void send_msg_handler() {
     	if (strcmp(message, "exit") == 0) {
 			break;
    		} else {
-     	 sprintf(buffer, "%s: %s\n", name, message);
+     	 sprintf(buffer, "%s: %s \n", name, message);
      	 send(sockfd, buffer, strlen(buffer), 0);
     	}
 
@@ -83,32 +84,57 @@ int main(int argc, char **argv){
 
 	char *ip = "127.0.0.1";
 	int port = atoi(argv[1]);
+	char buff_out[LENGTH];
+	
+	if((filefd = open("date.txt", O_RDWR)) < 0) {
+  		printf("ERROR: opening file\n");
+  		return EXIT_FAILURE;
+  	}
 
 	signal(SIGINT, catch_ctrl_c_and_exit);
 
 	printf("Please enter your name: ");
   	fgets(name, 32, stdin);
   	str_trim_lf(name, strlen(name));
+  	
+  	if (strlen(name) > 32 || strlen(name) < 2){
+		printf("Name must be less than 30 and more than 2 characters.\n");
+		return EXIT_FAILURE;
+	}
 
   	printf("Please enter your password: ");
   	fgets(password, 32, stdin);
   	str_trim_lf(password, strlen(password));
+  	
+  	if(strlen(password) > 32) {
+		printf("Password must be less than 32\n");
+		return EXIT_FAILURE;
+	}
+
 
   	for(int i = 0; i <= strlen(password); i++) {
   		if(password[i] != '\0')
   			password[i] = password[i] + 1;
   	}
 
-
-	if (strlen(name) > 32 || strlen(name) < 2){
-		printf("Name must be less than 30 and more than 2 characters.\n");
+  	int name_found=0,pass_found=0;
+  	while(read(filefd,buff_out,32) > 0)
+	{
+		if(strstr(buff_out,name) != NULL)
+			{
+			name_found=1;
+			if (read(filefd,buff_out,32) > 0)
+				if (strstr(buff_out,password) != NULL)
+					pass_found=1;
+			}
+	}
+	if (name_found == 1 && pass_found == 0)
+	{
+		printf("Wrong Password! \n");
 		return EXIT_FAILURE;
 	}
-
-	if(strlen(password) > 32) {
-		printf("Password must be less than 32\n");
-		return EXIT_FAILURE;
-	}
+	bzero(buff_out, LENGTH);
+	close(filefd);
 
 	struct sockaddr_in server_addr;
 
