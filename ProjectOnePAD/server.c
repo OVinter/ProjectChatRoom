@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <signal.h>
 #include <fcntl.h>
+#include <ctype.h>
 
 #define MAX_CLIENTS 100
 #define BUFFER_SZ 2048
@@ -17,6 +18,7 @@
 static _Atomic unsigned int cli_count = 0;
 static int uid = 10;
 int filefd = 0;
+
 /* Client structure */
 typedef struct{
 	struct sockaddr_in address;
@@ -28,6 +30,18 @@ typedef struct{
 
 client_t *clients[MAX_CLIENTS];
 
+typedef enum state {
+  BROADCAST,
+  TOUSER,
+  GETUSERS
+} type_message;
+
+typedef struct {
+	char data[50];
+	type_message type;
+	char user[32];
+} msg;
+
 pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void str_overwrite_stdout() {
@@ -36,13 +50,14 @@ void str_overwrite_stdout() {
 }
 
 void str_trim_lf (char* arr, int length) {
-  int i;
-  for (i = 0; i < length; i++) { // trim \n
-    if (arr[i] == '\n') {
-      arr[i] = '\0';
-      break;
+
+  	int i;
+  	for (i = 0; i < length; i++) { // trim \n
+    	if (arr[i] == '\n') {
+    	  arr[i] = '\0';
+    	  break;
+    	}
     }
-  }
 }
 
 void print_client_addr(struct sockaddr_in addr){
@@ -100,6 +115,104 @@ void send_message(char *s, int uid){
 
 	pthread_mutex_unlock(&clients_mutex);
 }
+/* Send message to a certain user */
+void send_message_to_user(char *s, char *uid){
+	pthread_mutex_lock(&clients_mutex);
+
+	for(int i=0; i<MAX_CLIENTS; ++i){
+		if(clients[i]){
+			if(strcmp(clients[i]->name, uid) == 0){
+				if(write(clients[i]->sockfd, s, strlen(s)) < 0){
+					perror("ERROR: write to descriptor failed");
+					break;
+				}
+			}
+		}
+	}
+
+	pthread_mutex_unlock(&clients_mutex);
+}
+
+int check_if_is_user(char *s) {
+	for(int i = 0; i < MAX_CLIENTS; i++) {
+		if(strcmp(clients[i]->name, s) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+void send_message_self(const char *s, int connfd){
+    msg mess;
+    strcpy(mess.data, s);
+    for(int i = 1; i < MAX_CLIENTS; i++) {
+    	if(clients[i]->uid == connfd) {
+		    if (write(clients[i]->sockfd, s, strlen(s)) < 0) {
+		        perror("Write to descriptor faileddd");
+		        return;
+		    }
+		}
+	}
+}
+
+void get_users(int uid) {
+	
+	char names[64];
+	msg mess;
+	mess.type = GETUSERS;
+	// for(int i = 0; i < MAX_CLIENTS; i++) {
+	// 	if(clients[i]) {
+	// 		sprintf(names, "[%d] %s\r\n", clients[i]->uid, clients[i]->name);
+	// 	}
+	// }
+	/*char *list = mess.data;
+	char s[32];
+	pthread_mutex_lock(&clients_mutex);
+    for (int i = 0; i < MAX_CLIENTS; i++){
+          if (clients[i])
+            {
+                // list = stpcpy (list, clients[i]->name);
+                // list = stpcpy (list, "\n");
+                sprintf(s, "%s\n", clients[i]->name);
+                printf("%s\n", s);
+                send_message_self(s, uid);
+
+            }
+    }*/
+
+  mess.type = GETUSERS;
+  char *list = mess.data;
+
+  int i;
+  for(i = 0; i < MAX_CLIENTS; i++)
+  {
+    if(clients[i]->sockfd!= 0)
+    {
+      list = stpcpy(list, clients[i]->name);
+      list = stpcpy(list, "\n");
+    }
+  }
+
+  if(send(clients[uid]->sockfd, &mess, sizeof(msg), 0) < 0)
+  {
+      perror("Send failed");
+      exit(1);
+  }
+
+ //    printf("dasadsads\n");
+	// strcpy(mess.data, names);
+	// printf("%s\n", mess.data);
+
+	//if((send(clients[uid]->sockfd, &mess, sizeof(msg), 0)) < 0) {
+	// for(int i = 0; i < MAX_CLIENTS; i++) {
+	// 	if(clients[i]->uid == uid) {
+	// 		if(write(uid, list, strlen(list)) < 0) {
+	// 			perror("ERROR: write to descriptor failed");
+	// 			exit(-1);
+	// 		}
+	// 	}
+	// }
+	pthread_mutex_unlock(&clients_mutex);
+}
 
 /* Handle all communication with the client */
 void *handle_client(void *arg){
@@ -107,6 +220,7 @@ void *handle_client(void *arg){
 	char name[32];
 	char password[32];
 	int leave_flag = 0;
+	char user_name[32];
 
 	cli_count++;
 	client_t *cli = (client_t *)arg;
@@ -117,10 +231,12 @@ void *handle_client(void *arg){
 		leave_flag = 1;
 	} else{
 		strcpy(cli->name, name);
+
 		if(write(filefd, name, 32) < 0) {
 			printf("ERROR: saving name to file\n");
 			exit(-1);
 		}
+
 		sprintf(buff_out, "%s has joined\n", cli->name);
 		printf("%s", buff_out);
 		send_message(buff_out, cli->uid);
@@ -139,35 +255,63 @@ void *handle_client(void *arg){
 	}
 
 	bzero(buff_out, BUFFER_SZ);
+	
+	// int receive = recv(cli->sockfd, &mess, sizeof(msg), 0);
+
+	// switch(mess.type) {
+	// 	case BROADCAST: {
+
+	// 		break;
+	// 	}
+	// }
+	// int receive = recv(cli->sockfd, buff_out, BUFFER_SZ, 0);
+	// printf("%s\n", buff_out);
+	msg mess;
 
 	while(1){
 		if (leave_flag) {
 			break;
 		}
 
-		int receive = recv(cli->sockfd, buff_out, BUFFER_SZ, 0);
-		if (receive > 0){
-			if(strlen(buff_out) > 0){
-				send_message(buff_out, cli->uid);
+		int receive = recv(cli->sockfd, (void *)&mess, sizeof(msg), 0);
+		//printf("%d\n", mess.type);
+		// int r = recv(cli->sockfd, buff_out, BUFFER_SZ, 0);
+		// printf("%s\n", buff_out);
 
-				str_trim_lf(buff_out, strlen(buff_out));
-				printf("%s -> %s\n", buff_out, cli->name);
+		//printf("%s\n", mess.data);
+		if (receive > 0){
+			if(sizeof(mess) > 0) {
+				
+				if(mess.type == BROADCAST){
+					strcpy(buff_out, mess.data);
+					send_message(buff_out, cli->uid);
+					str_trim_lf(buff_out, strlen(buff_out));
+					printf("%s -> %s\n", buff_out, cli->name);
+				} else if(mess.type == TOUSER){
+					printf("%s\n", mess.user);
+					strcpy(buff_out, mess.data);
+					send_message_to_user(buff_out, mess.user);
+					str_trim_lf(buff_out, strlen(buff_out));
+					printf("%s -> %s\n", buff_out, cli->name);
+				} else if(mess.type == GETUSERS) {
+					get_users(cli->uid);
+				}
 			}
-		} else if (receive == 0 || strcmp(buff_out, "exit") == 0){
-			sprintf(buff_out, "%s has left\n", cli->name);
+		} else if (receive == 0 || strcmp(mess.data, "exit") == 0){
+			sprintf(mess.data, "%s has left\n", cli->name);
 			printf("%s", buff_out);
-			send_message(buff_out, cli->uid);
+			send_message(mess.data, cli->uid);
 			leave_flag = 1;
 		} else {
 			printf("ERROR: -1\n");
 			leave_flag = 1;
 		}
-
+		
 		bzero(buff_out, BUFFER_SZ);
 	}
 
   /* Delete client from queue and yield thread */
-	close(cli->sockfd);
+  	close(cli->sockfd);
   	queue_remove(cli->uid);
   	free(cli);
   	cli_count--;
@@ -204,7 +348,7 @@ int main(int argc, char **argv){
   /* Ignore pipe signals */
 	signal(SIGPIPE, SIG_IGN);
 
-	if(setsockopt(listenfd, SOL_SOCKET,(SO_REUSEPORT | SO_REUSEADDR),(char*)&option,sizeof(option)) < 0){
+	if(setsockopt(listenfd, SOL_SOCKET, SO_REUSEPORT, (char*)&option, sizeof(option)) < 0){
 		perror("ERROR: setsockopt failed");
     	return EXIT_FAILURE;
 	}
